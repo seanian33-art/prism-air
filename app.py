@@ -42,10 +42,12 @@ from utils import (
     claims_to_markdown,
     claims_to_text,
     delete_saved_idea,
+    export_backup_json,
     generate_saved_ideas_docx,
     history_label,
     idea_to_diagram_text,
     idea_to_markdown,
+    import_backup,
     layer_contribution_chart,
     load_history,
     load_saved_ideas,
@@ -154,6 +156,41 @@ with st.sidebar:
                     }
                     st.session_state["kipris"] = {f"{entry_id}-{no}": k for no, k in h.get("kipris", {}).items()}
                     st.rerun()
+
+    # --- 카드 4: 이력 백업 / 복원 ---
+    # 웹 배포 서버는 재시작·재배포 때 디스크(history.json)가 초기화되므로, 파일로 내려받아 옮겨 담는다.
+    with st.container(key="sidebar_card_backup"):
+        st.markdown('<p class="sidebar-card-title">💾 이력 백업 / 복원</p>', unsafe_allow_html=True)
+        st.caption("분석 히스토리와 아이디어 보관함을 파일 하나로 내보내고, 다른 PC나 웹에서 불러옵니다.")
+        st.download_button(
+            "⬇️ 이력 내보내기 (JSON)",
+            data=export_backup_json(),
+            file_name=f"prism_air_backup_{datetime.now():%Y%m%d_%H%M}.json",
+            mime="application/json",
+            width="stretch",
+            key="backup_download",
+        )
+        backup_file = st.file_uploader(
+            "백업 파일 가져오기",
+            type=["json"],
+            key="backup_upload",
+            help="내보낸 백업 파일(또는 history.json / saved_ideas.json)을 올리면 현재 이력에 합쳐집니다. "
+            "이미 있는 항목은 건너뛰므로 기존 이력이 지워지지 않습니다.",
+        )
+        if backup_file is not None and st.button("⬆️ 가져와서 합치기", key="backup_import_btn", width="stretch"):
+            try:
+                added_h, added_s = import_backup(backup_file.getvalue())
+            except ValueError as e:
+                st.error(str(e))
+            else:
+                st.session_state["backup_notice"] = (
+                    f"이력 {added_h}건, 보관함 아이디어 {added_s}건을 가져왔습니다."
+                    if added_h or added_s
+                    else "새로 추가할 항목이 없습니다. (모두 이미 있는 이력입니다)"
+                )
+                st.rerun()
+        if notice := st.session_state.pop("backup_notice", None):
+            st.success(notice)
 mode = MODES[mode_label]
 
 def render_stack_diagram(raw_svg: str) -> None:

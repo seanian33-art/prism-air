@@ -234,6 +234,89 @@ def _update_history_entry(entry_id: str, field: str, idea_no: int, value) -> Non
 
 
 # ---------------------------------------------------------------------------
+# 이력 백업 / 복원 (웹 배포처럼 서버 디스크가 초기화되는 환경에서 이력을 옮기기 위한 JSON 파일)
+# ---------------------------------------------------------------------------
+BACKUP_FORMAT = "prism-air-backup"
+
+
+def export_backup_json() -> str:
+    """분석 이력 + 아이디어 보관함을 하나의 JSON 문자열로 묶는다."""
+    return json.dumps(
+        {
+            "format": BACKUP_FORMAT,
+            "version": 1,
+            "exported_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "history": load_history(),
+            "saved_ideas": load_saved_ideas(),
+        },
+        ensure_ascii=False,
+        indent=2,
+    )
+
+
+def _history_key(entry: dict) -> str:
+    # id가 없는 초기 이력은 날짜+제목으로 중복을 판정한다.
+    return entry.get("id") or f"{entry.get('date', '')}|{entry.get('title') or entry.get('keywords', '')}"
+
+
+def import_backup(raw: bytes) -> tuple[int, int]:
+    """백업 파일을 현재 이력·보관함에 병합한다. 이미 있는 항목(같은 id)은 건너뛴다.
+
+    백업 파일 형식 외에 history.json / saved_ideas.json 원본 파일(리스트)도 받는다.
+    반환: (추가된 이력 수, 추가된 보관함 아이디어 수). 형식이 잘못되면 ValueError.
+    """
+    try:
+        data = json.loads(raw.decode("utf-8-sig"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        raise ValueError("JSON 파일을 읽을 수 없습니다. PRISM Air에서 내보낸 백업 파일인지 확인해 주세요.") from e
+
+    if isinstance(data, dict) and data.get("format") == BACKUP_FORMAT:
+        new_history, new_saved = data.get("history") or [], data.get("saved_ideas") or []
+    elif isinstance(data, list):
+        # 원본 파일: 보관함 항목은 'idea' 필드, 이력 항목은 'full_result'/'ideas' 필드를 가진다.
+        if data and all(isinstance(x, dict) and "idea" in x for x in data):
+            new_history, new_saved = [], data
+        else:
+            new_history, new_saved = data, []
+    else:
+        raise ValueError("PRISM Air 백업 파일 형식이 아닙니다.")
+    if not isinstance(new_history, list) or not isinstance(new_saved, list):
+        raise ValueError("백업 파일의 내용이 올바르지 않습니다.")
+
+    history = load_history()
+    known = {_history_key(h) for h in history}
+    added_history = 0
+    for entry in new_history:
+        if not isinstance(entry, dict) or not (entry.get("full_result") or entry.get("ideas")):
+            continue
+        key = _history_key(entry)
+        if key in known:
+            continue
+        history.append(entry)
+        known.add(key)
+        added_history += 1
+    if added_history:
+        history.sort(key=lambda h: h.get("date", ""))  # 사이드바는 날짜순 (최신이 위)
+        _save_history(history)
+
+    saved = load_saved_ideas()
+    known_saved = {saved_item_id(s) for s in saved}
+    added_saved = 0
+    for item in new_saved:
+        if not isinstance(item, dict) or not isinstance(item.get("idea"), dict):
+            continue
+        if saved_item_id(item) in known_saved:
+            continue
+        saved.append(item)
+        known_saved.add(saved_item_id(item))
+        added_saved += 1
+    if added_saved:
+        write_saved_ideas(saved)
+
+    return added_history, added_saved
+
+
+# ---------------------------------------------------------------------------
 # 아이디어 보관함 (saved_ideas.json)
 # ---------------------------------------------------------------------------
 SAVED_IDEAS_PATH = Path(__file__).parent / "saved_ideas.json"
