@@ -238,6 +238,7 @@ def patent_lookup_block(raw_number: str) -> dict | None:
     return p
 
 
+
 render_header()
 st.caption(f"현재 모드: {mode_label}")
 
