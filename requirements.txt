@@ -3,3 +3,4 @@ requests
 pypdf
 python-docx
 openai
+anthropic
